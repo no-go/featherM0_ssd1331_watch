@@ -2,7 +2,11 @@
 
 using a adafruit feather M0 with SPI oled SSD1331 (16bit) and MPU-6050 as watch and step counter.
 
-## Hardware and Features
+# bugs
+
+sometimes I got a restart and time accurency is bad :-S
+
+# Hardware and Features
 
  -  feather M0 with BLE module nRF52 (set clock and send small messages via UART)
  -  OLED 16bit color SPI display (clock, powerbar, with dim mode and off mode)
@@ -14,6 +18,8 @@ using a adafruit feather M0 with SPI oled SSD1331 (16bit) and MPU-6050 as watch 
 
 I use the watchdog timer https://github.com/adafruit/Adafruit_SleepyDog to sleep
 and NOT `delay()` to save power!
+
+# screenshots
 
 ## wackup
 
@@ -44,7 +50,3 @@ it is a black display and save power :-D
 ![color 3](color3.jpg)
 ![color 4](color4.jpg)
 ![color 5](color5.jpg)
-
-# bugs
-
-sometimes I got a restart :-S

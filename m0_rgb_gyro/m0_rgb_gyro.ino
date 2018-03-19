@@ -24,8 +24,8 @@ const int MPU=0x68;  // I2C address of the MPU-6050
 long treshold = 6; //initial
 
 byte batLength = 34;
-int  DIMSEC    = 6;
-int  OFFSEC    = 12;
+int  DIMSEC    = 5;
+int  OFFSEC    = 15;
 
 // -------------------------------------------Config End
 
@@ -56,23 +56,21 @@ byte minutes = 0;
 byte seconds = 0;
 int displayOnSec = 0;
 int messageOnSec = -1;
-byte pressTicks = 0;
+byte pressTicks  = 0;
 
 byte lhours   = 1;
 byte lminutes = 1;
 byte lseconds = 1;
 
-int do_ms;
-
 bool showDetails = false;
 
-char serialCache[32] = "                               ";
+char serialCache[33] = "                               ";
 int cpos = 0;
 
 uint32_t potival = 0;
 
 // 6x16 zeichen:
-#define BUFLEN 96
+#define BUFLEN 64
 bool contin;
 
 // The temperature sensor is -40 to +85 degrees Celsius.
@@ -336,6 +334,8 @@ inline void printClock() {
       oldCol = clockColor2;
       xx = myFont( 3, 3, hours/10);
       clockColor2 = oldCol;
+    } else {
+      oled.fillRect( 3, 3, 16, 14, BACKGROUND);
     }
     oldCol = clockColor2;
     myFont(xx, 3, hours - 10*(hours/10));
@@ -372,31 +372,26 @@ inline void printClock() {
   lseconds = seconds;
 }
 
-void ticking(int tic=1) {
-  for (int i=0; i<tic; ++i) {
-    //do_ms = Watchdog.sleep(219); // 250 is to slow
-    Watchdog.sleep(125);
-    Watchdog.sleep(63);
-    do_ms = Watchdog.sleep(31);
-    tick++;
-    if (tick>3) {
-      seconds++;
-      if (displayOnSec >=0) displayOnSec++;
-      if (messageOnSec >=0) messageOnSec++;
-      if (messageOnSec > OFFSEC) messageOnSec = -1;
-      tick=0;
-    }
-    if (seconds > 59) {
-      minutes += seconds / 60;
-      seconds  = seconds % 60;
-    }
-    if (minutes > 59) {
-      hours  += minutes / 60;
-      minutes = minutes % 60;
-    }
-    if (hours > 23) {
-      hours = hours % 24;
-    }
+inline void ticking() {
+  Watchdog.sleep(250);
+  tick++;
+  if (tick>3) {
+    seconds++;
+    if (displayOnSec >=0) displayOnSec++;
+    if (messageOnSec >=0) messageOnSec++;
+    if (messageOnSec > OFFSEC) messageOnSec = -1;
+    tick=0;
+  }
+  if (seconds > 59) {
+    minutes += seconds / 60;
+    seconds  = seconds % 60;
+  }
+  if (minutes > 59) {
+    hours  += minutes / 60;
+    minutes = minutes % 60;
+  }
+  if (hours > 23) {
+    hours = hours % 24;
   }
 }
 
@@ -433,12 +428,14 @@ void setup() {
 
   ble.begin(false);
   ble.echo(false);
+  /*
   ble.sendCommandCheckOK("AT+HWModeLED=BLEUART");
   ble.sendCommandCheckOK("AT+GAPDEVNAME=M0 Watch");
   ble.sendCommandCheckOK("ATE=0");
   ble.sendCommandCheckOK("AT+BAUDRATE=115200");
   ble.sendCommandCheckOK("ATZ");
   ble.setMode(BLUEFRUIT_MODE_DATA);
+  */
   ble.verbose(false);
   delay(7);
   
@@ -483,7 +480,6 @@ void loop() {
   }
 
   if (digitalRead(BUTTON2) == LOW) {
-    oled.fillScreen(BACKGROUND);
     displayOnSec=0;
     lhours++; // force refresh
     lminutes++;
@@ -497,7 +493,6 @@ void loop() {
   }
   
   if (digitalRead(BUTTON3) == LOW) {
-    oled.fillScreen(BACKGROUND);
     displayOnSec=0;
     lhours++; // force refresh
     lminutes++;
@@ -601,7 +596,7 @@ void loop() {
   deltax = map(GyX, -17200, 17200, 0, 360);
   deltay = map(GyY, -17200, 17200, 0, 360); 
 
-  if (displayOnSec == DIMSEC) {
+  if (displayOnSec >= DIMSEC) {
     clockColor2 = RED;
     lhours++; // force refresh
     lminutes++;
