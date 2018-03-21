@@ -2,10 +2,6 @@
 
 using a adafruit feather M0 with SPI oled SSD1331 (16bit) and MPU-6050 as watch and step counter.
 
-# bugs
-
-sometimes I got a restart and time accurency is bad :-S
-
 # Hardware and Features
 
  -  feather M0 with BLE module nRF52 (set clock and send small messages via UART)
