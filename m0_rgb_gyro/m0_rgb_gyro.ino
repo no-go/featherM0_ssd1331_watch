@@ -2,7 +2,10 @@
 #include <Adafruit_SleepyDog.h>
 
 // -------------------------------------------Config Start
-const int MPU=0x68;  // I2C address of the MPU-6050
+const int MPU=0x69;  // I2C address of the MPU-6050 (AD0 to 3.3V)
+
+#define SET_INIT_RTC 0
+#define SET_BUTTONS  0
 
 #define OLED_DC      5
 #define OLED_CS     A4
@@ -38,6 +41,7 @@ int  OFFSEC    = 15;
 
 #include <SPI.h>
 #include <Wire.h>
+#include "DS3231M.h"
 
 int16_t AcX,AcY,AcZ,Tmp,GyX,GyY,GyZ;
 
@@ -50,10 +54,14 @@ unsigned long steps = 0;
 
 int deltax,deltay;
 
-byte tick    = 0;
-byte hours   = 0;
-byte minutes = 0;
-byte seconds = 0;
+//RTCdata data = {40,53,21, 3, 21,03,18}; // (3 == )Mittwoch, 21:53:40 Uhr 21.03.2018
+#if SET_INIT_RTC > 0
+  RTCdata data = {20,17,12, 3, 21,03,18};
+#else
+  RTCdata data;
+#endif
+
+byte tick        = 0;
 int displayOnSec = 0;
 int messageOnSec = -1;
 byte pressTicks  = 0;
@@ -329,21 +337,21 @@ inline void batteryFrame() {
 inline void printClock() {
   int xx = 19;
   short oldCol;
-  if (lhours != hours) {
-    if (hours > 9) {
+  if (lhours != data.hour) {
+    if (data.hour > 9) {
       oldCol = clockColor2;
-      xx = myFont( 3, 3, hours/10);
+      xx = myFont( 3, 3, data.hour/10);
       clockColor2 = oldCol;
     } else {
       oled.fillRect( 3, 3, 16, 14, BACKGROUND);
     }
     oldCol = clockColor2;
-    myFont(xx, 3, hours - 10*(hours/10));
+    myFont(xx, 3, data.hour - 10*(data.hour/10));
     clockColor2 = oldCol;
   }
   
-  if (lseconds != seconds) {
-    if (seconds%2 == 0) {
+  if (lseconds != data.second) {
+    if (data.second%2 == 0) {
       oled.fillRect(36,  5, 2, 2, clockColor);
       oled.fillRect(36, 13, 2, 2, clockColor);
     } else {
@@ -352,47 +360,37 @@ inline void printClock() {
     }
   }
     
-  if (lminutes != minutes) {
+  if (lminutes != data.minute) {
     oldCol = clockColor2;
-    xx = myFont(45, 3, minutes/10);
+    xx = myFont(45, 3, data.minute/10);
     clockColor2 = oldCol;
 
     oldCol = clockColor2;
-    myFont(xx, 3, minutes - 10*(minutes/10));
+    myFont(xx, 3, data.minute - 10*(data.minute/10));
     clockColor2 = oldCol;
   }
 
-  if (showDetails && lseconds != seconds) {
-    xx = myFont(55, 23, seconds/10);
-    myFont(xx, 23, seconds - 10*(seconds/10));
+  if (showDetails && lseconds != data.second) {
+    xx = myFont(55, 23, data.second/10);
+    myFont(xx, 23, data.second - 10*(data.second/10));
   }
 
-  lhours = hours;
-  lminutes = minutes;
-  lseconds = seconds;
+  lhours = data.hour;
+  lminutes = data.minute;
+  lseconds = data.second;
 }
 
 inline void ticking() {
   Watchdog.sleep(250);
+  //delay(250);
   tick++;
   if (tick>3) {
-    seconds++;
     if (displayOnSec >=0) displayOnSec++;
     if (messageOnSec >=0) messageOnSec++;
     if (messageOnSec > OFFSEC) messageOnSec = -1;
     tick=0;
   }
-  if (seconds > 59) {
-    minutes += seconds / 60;
-    seconds  = seconds % 60;
-  }
-  if (minutes > 59) {
-    hours  += minutes / 60;
-    minutes = minutes % 60;
-  }
-  if (hours > 23) {
-    hours = hours % 24;
-  }
+  DS3231M_get(data);
 }
 
 inline int16_t absi(int16_t val) {
@@ -407,9 +405,10 @@ void getTime() {
   if (serialCache[2] == ':' && serialCache[5] == ':') i=0;
   if (serialCache[3] == ':' && serialCache[6] == ':') i=1;
   if (i == NO_TIME_THERE) return;
-  hours = tob(serialCache[i])*10 + tob(serialCache[1+i]);
-  minutes = tob(serialCache[3+i])*10 + tob(serialCache[4+i]);
-  seconds = tob(serialCache[6+i])*10 + tob(serialCache[7+i]);
+  data.hour = tob(serialCache[i])*10 + tob(serialCache[1+i]);
+  data.minute = tob(serialCache[3+i])*10 + tob(serialCache[4+i]);
+  data.second = tob(serialCache[6+i])*10 + tob(serialCache[7+i]);
+  DS3231M_set(data);
 }
 
 void setup() {
@@ -439,6 +438,9 @@ void setup() {
   ble.verbose(false);
   delay(7);
   
+#if SET_INIT_RTC > 0
+  DS3231M_set(data);
+#endif
   oled.begin();
   
   oled.fillScreen(BACKGROUND);
@@ -479,14 +481,17 @@ void loop() {
     }
   }
 
+#if SET_BUTTONS > 0
+
   if (digitalRead(BUTTON2) == LOW) {
     displayOnSec=0;
     lhours++; // force refresh
     lminutes++;
     oled.writeCommand(SSD1331_CMD_DISPLAYON);
     while (digitalRead(BUTTON2) == LOW) {
-      hours = (hours+1)%24;
-      lhours = hours-1;
+      data.hour = (data.hour+1)%24;
+      DS3231M_set(data);
+      lhours = data.hour-1;
       printClock();
       ticking();
     }
@@ -498,12 +503,14 @@ void loop() {
     lminutes++;
     oled.writeCommand(SSD1331_CMD_DISPLAYON);
     while (digitalRead(BUTTON3) == LOW) {
-      minutes = (minutes+1)%60;
-      lminutes = minutes-1;
+      data.minute = (data.minute+1)%60;
+      lminutes = data.minute-1;
+      DS3231M_set(data);
       printClock();
       ticking();
     }
   }
+#endif
       
   if (tick == 0  && displayOnSec >= 0) {
     if (displayOnSec < DIMSEC) {
@@ -555,7 +562,7 @@ void loop() {
     pressTicks = -1;
   }
 
-  if (showDetails && seconds%4 == 0 && tick==0 && displayOnSec>=0 && messageOnSec < 0 && displayOnSec < DIMSEC) {
+  if (showDetails && data.second%4 == 0 && tick==0 && displayOnSec>=0 && messageOnSec < 0 && displayOnSec < DIMSEC) {
     batteryBar();
   }
 
