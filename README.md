@@ -12,11 +12,11 @@ using a adafruit feather M0 with SPI oled SSD1331 (16bit) and MPU-6050 as watch 
  -  25k poti to change the clock color
  -  3,7V 180mAh lipo (>10h)
  -  save power and high time accurency: Real Time Clock DS3231M is added to i2c
+ -  Alarm timer (set with buttons - mode without setting clock)
 
 The 2 buttons to set hours and minutes is an option (set `#define SET_BUTTONS  0` from 0 to 1).
 
-I use the watchdog timer https://github.com/adafruit/Adafruit_SleepyDog to sleep
-and NOT `delay()` to save power!
+I use the watchdog timer to sleep and NOT `delay()` to save power! (I hope to fix a Adafruit Sleepdog reset bug).
 
 # Circuit hints
 
@@ -47,6 +47,8 @@ it is a black display and save power :-D
 ![details](details.jpg)
 
 ## bluetooth UART message
+
+a bit buggy
 
 ![message via uart](message.jpg)
 

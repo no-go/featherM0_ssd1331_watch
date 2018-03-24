@@ -1,5 +1,5 @@
-#include <Arduino.h>
-#include <Adafruit_SleepyDog.h>
+#include <sam.h>
+#include <power.h>
 
 // -------------------------------------------Config Start
 const int MPU=0x69;  // I2C address of the MPU-6050 (AD0 to 3.3V)
@@ -22,6 +22,9 @@ const int MPU=0x69;  // I2C address of the MPU-6050 (AD0 to 3.3V)
 #define POTI      A2
 #define SPEAKER   10 // beep on click
 
+#define LED_WHITE  A0
+#define VIBRATE    11
+
 #define ONACCEL   32500l
 
 long treshold = 6; //initial
@@ -29,6 +32,7 @@ long treshold = 6; //initial
 byte batLength = 34;
 int  DIMSEC    = 5;
 int  OFFSEC    = 15;
+int  alarmsec  = -1;
 
 // -------------------------------------------Config End
 
@@ -81,12 +85,8 @@ uint32_t potival = 0;
 #define BUFLEN 64
 bool contin;
 
-// The temperature sensor is -40 to +85 degrees Celsius.
-// It is a signed integer.
-// According to the datasheet: 
-//   340 per degrees Celsius, -512 at 35 degrees.
-// At 0 degrees: -512 - (340 * 35) = -12412
-double dT; // unused
+bool wled = false;
+bool vibr = false;
 
 // Color definitions
 #define BLACK           0x0000
@@ -118,6 +118,27 @@ Adafruit_BluefruitLE_SPI ble(BLUEFRUIT_SPI_CS, BLUEFRUIT_SPI_IRQ, BLUEFRUIT_SPI_
 
 short clockColor  = WHITE;
 short clockColor2 = RED2;
+
+
+#define LOGO16_GLCD_HEIGHT 16 
+#define LOGO16_GLCD_WIDTH  16 
+static const unsigned char PROGMEM step_bmp[] =
+{ B00000000, B00000000,
+  B00000000, B00000000,
+  B00000000, B00000000,
+  B00111100, B00000000,
+  B01111100, B00000000,
+  B01111100, B01111000,
+  B01111100, B01111100,
+  B01111100, B01111100,
+  B01111000, B01111100,
+  B01111000, B01111100,
+  B00000000, B00111100,
+  B01111100, B00111100,
+  B01111100, B00000000,
+  B00111000, B01111100,
+  B00000000, B01111100,
+  B00000000, B00111000 };
 
 static const uint8_t PROGMEM zero[] = {
 B01110000,
@@ -297,6 +318,7 @@ char umlReplace(char inChar) {
 }
 
 short green2red(int val, int maxi) {
+  if (displayOnSec >= DIMSEC) return WHITE;
   // 16 bit = 5+6+5
   short result = 0x0000;
   int redPart   = 0;
@@ -335,15 +357,15 @@ inline void batteryFrame() {
 }
 
 inline void printClock() {
-  int xx = 19;
+  int xx = 24;
   short oldCol;
   if (lhours != data.hour) {
     if (data.hour > 9) {
       oldCol = clockColor2;
-      xx = myFont( 3, 3, data.hour/10);
+      xx = myFont( 8, 3, data.hour/10);
       clockColor2 = oldCol;
     } else {
-      oled.fillRect( 3, 3, 16, 14, BACKGROUND);
+      oled.fillRect( 8, 3, 16, 14, BACKGROUND);
     }
     oldCol = clockColor2;
     myFont(xx, 3, data.hour - 10*(data.hour/10));
@@ -352,17 +374,17 @@ inline void printClock() {
   
   if (lseconds != data.second) {
     if (data.second%2 == 0) {
-      oled.fillRect(36,  5, 2, 2, clockColor);
-      oled.fillRect(36, 13, 2, 2, clockColor);
+      oled.fillRect(41,  5, 2, 2, clockColor);
+      oled.fillRect(41, 13, 2, 2, clockColor);
     } else {
-      oled.fillRect(36,  5, 2, 2, BACKGROUND);
-      oled.fillRect(36, 13, 2, 2, BACKGROUND);    
+      oled.fillRect(41,  5, 2, 2, BACKGROUND);
+      oled.fillRect(41, 13, 2, 2, BACKGROUND);    
     }
   }
     
   if (lminutes != data.minute) {
     oldCol = clockColor2;
-    xx = myFont(45, 3, data.minute/10);
+    xx = myFont(50, 3, data.minute/10);
     clockColor2 = oldCol;
 
     oldCol = clockColor2;
@@ -381,14 +403,30 @@ inline void printClock() {
 }
 
 inline void ticking() {
-  Watchdog.sleep(250);
-  //delay(250);
+  WDT->CTRL.reg = 0;
+  while(WDT->STATUS.bit.SYNCBUSY);
+  WDT->INTENSET.bit.EW   = 1;
+  WDT->CONFIG.bit.PER    = 0xB;
+  WDT->CONFIG.bit.WINDOW = 0x5; // 256ms
+  WDT->CTRL.bit.WEN      = 1;
+  while(WDT->STATUS.bit.SYNCBUSY);
+
+  WDT->CLEAR.reg = WDT_CLEAR_CLEAR_KEY;
+  while(WDT->STATUS.bit.SYNCBUSY);
+  
+  WDT->CTRL.bit.ENABLE = 1;
+  while(WDT->STATUS.bit.SYNCBUSY);
+
+  system_set_sleepmode(SYSTEM_SLEEPMODE_STANDBY);
+  system_sleep();
+  
   tick++;
   if (tick>3) {
     if (displayOnSec >=0) displayOnSec++;
     if (messageOnSec >=0) messageOnSec++;
     if (messageOnSec > OFFSEC) messageOnSec = -1;
     tick=0;
+    if (alarmsec>0) alarmsec--;
   }
   DS3231M_get(data);
 }
@@ -418,7 +456,9 @@ void setup() {
 
   pinMode(POTI, INPUT);
   pinMode(SPEAKER, OUTPUT);
-  
+  pinMode(LED_WHITE, OUTPUT);
+  pinMode(VIBRATE, OUTPUT);
+    
   Wire.begin();
   Wire.beginTransmission(MPU);
   Wire.write(0x6B);  // PWR_MGMT_1 register
@@ -427,14 +467,14 @@ void setup() {
 
   ble.begin(false);
   ble.echo(false);
-  /*
+
   ble.sendCommandCheckOK("AT+HWModeLED=BLEUART");
-  ble.sendCommandCheckOK("AT+GAPDEVNAME=M0 Watch");
+  ble.sendCommandCheckOK("AT+GAPDEVNAME=Pager");
   ble.sendCommandCheckOK("ATE=0");
   ble.sendCommandCheckOK("AT+BAUDRATE=115200");
   ble.sendCommandCheckOK("ATZ");
   ble.setMode(BLUEFRUIT_MODE_DATA);
-  */
+
   ble.verbose(false);
   delay(7);
   
@@ -445,6 +485,20 @@ void setup() {
   
   oled.fillScreen(BACKGROUND);
   oled.setTextSize(1);
+  
+  GCLK->GENDIV.reg = GCLK_GENDIV_ID(2) | GCLK_GENDIV_DIV(4);
+  GCLK->GENCTRL.reg = GCLK_GENCTRL_ID(2) |
+                      GCLK_GENCTRL_GENEN |
+                      GCLK_GENCTRL_SRC_OSCULP32K |
+                      GCLK_GENCTRL_DIVSEL;
+  while(GCLK->STATUS.bit.SYNCBUSY);
+  GCLK->CLKCTRL.reg = GCLK_CLKCTRL_ID_WDT |
+                      GCLK_CLKCTRL_CLKEN |
+                      GCLK_CLKCTRL_GEN_GCLK2;
+  NVIC_DisableIRQ(WDT_IRQn);
+  NVIC_ClearPendingIRQ(WDT_IRQn);
+  NVIC_SetPriority(WDT_IRQn, 0); // Top priority
+  NVIC_EnableIRQ(WDT_IRQn);
 }
 
 
@@ -510,7 +564,32 @@ void loop() {
       ticking();
     }
   }
+#else
+
+  if (digitalRead(BUTTON3) == LOW) {
+    alarmsec = -1; // off
+    vibr = false;
+    wled = false;
+    digitalWrite(VIBRATE, vibr);
+    digitalWrite(LED_WHITE, wled);
+    snprintf(serialCache,32,"       ");
+  }
+  
+  if (digitalRead(BUTTON2) == LOW) {
+    displayOnSec=0;
+    oled.writeCommand(SSD1331_CMD_DISPLAYON);
+    alarmsec = (alarmsec+30)%600;
+  }
+  
 #endif
+
+  if (alarmsec == 0) {
+    vibr = !vibr;
+    digitalWrite(VIBRATE, vibr);
+    wled = !wled;
+    digitalWrite(LED_WHITE, wled);
+    analogWrite(SPEAKER, 50);   
+  }
       
   if (tick == 0  && displayOnSec >= 0) {
     if (displayOnSec < DIMSEC) {
@@ -522,24 +601,25 @@ void loop() {
     if (showDetails) {
       oled.setTextColor(clockColor, BACKGROUND);
       oled.setCursor(0, 40);
-      oled.print("        ");
+      oled.print("         ");
       oled.setCursor(0, 40);
-      if (deltax < 120) {
-        oled.print("-> sky  ");
-      } else if (deltax > 240) {
-        oled.print("-> floor");
-      } else {
+      if (alarmsec>0) {
+        snprintf(serialCache,32,"%3d sec  ",alarmsec);
         oled.print(serialCache);
+      } else {
+        if (deltax < 120) {
+          oled.print(" -> sky  ");
+        } else if (deltax > 240) {
+          oled.print(" -> floor");
+        } else {
+          oled.print(serialCache);
+        }
       }
-      oled.setTextColor(clockColor2, BACKGROUND);
-      oled.setCursor(0, 30);
-      oled.print(steps);
-      oled.print(" Steps");
-    } else {
-      oled.setTextColor(clockColor2, BACKGROUND);
-      oled.setCursor(0, 30);
-      oled.print(steps);     
     }
+    oled.setTextColor(clockColor2, BACKGROUND);
+    oled.setCursor(19, 28);
+    oled.drawBitmap(0, 21, step_bmp, 16, 16, clockColor2);
+    oled.print(steps);     
   }
   
   analogWrite(SPEAKER, 0);
@@ -562,7 +642,7 @@ void loop() {
     pressTicks = -1;
   }
 
-  if (showDetails && data.second%4 == 0 && tick==0 && displayOnSec>=0 && messageOnSec < 0 && displayOnSec < DIMSEC) {
+  if (showDetails && data.second%3 == 0 && tick==0 && displayOnSec>=0 && messageOnSec < 0) {
     batteryBar();
   }
 
@@ -578,11 +658,10 @@ void loop() {
   AcX=Wire.read()<<8|Wire.read();  // 0x3B (ACCEL_XOUT_H) & 0x3C (ACCEL_XOUT_L)    
   AcY=Wire.read()<<8|Wire.read();  // 0x3D (ACCEL_YOUT_H) & 0x3E (ACCEL_YOUT_L)
   AcZ=Wire.read()<<8|Wire.read();  // 0x3F (ACCEL_ZOUT_H) & 0x40 (ACCEL_ZOUT_L)
-  dT = ( (double) Tmp + 12412.0) / 340.0;
   
   stoss = absi(AcX) + absi(AcY) + absi(AcZ);
   
-  barrier = treshold*5000l + 9000l;
+  barrier = treshold*5000L + 8000L;
   if (stoss > barrier) {
     steps++;
   }
@@ -622,3 +701,8 @@ void loop() {
   }
 }
 
+void WDT_Handler(void) {
+  WDT->CTRL.bit.ENABLE = 0;        // Disable watchdog
+  while(WDT->STATUS.bit.SYNCBUSY); // Sync CTRL write
+  WDT->INTFLAG.bit.EW  = 1;        // Clear interrupt flag
+}
