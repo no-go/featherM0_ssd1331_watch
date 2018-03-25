@@ -1,11 +1,11 @@
 #include <sam.h>
 #include <power.h>
+#include <wdt.h>
 
 // -------------------------------------------Config Start
 const int MPU=0x69;  // I2C address of the MPU-6050 (AD0 to 3.3V)
 
 #define SET_INIT_RTC 0
-#define SET_BUTTONS  0
 
 #define OLED_DC      5
 #define OLED_CS     A4
@@ -13,7 +13,7 @@ const int MPU=0x69;  // I2C address of the MPU-6050 (AD0 to 3.3V)
 
 #define VBATPIN   A7  // A7 = D9 !!
 
-#define VCCMAX 4400
+#define VCCMAX 4370
 #define VCCMIN 3550
 
 #define BUTTON    A1 //(to - on press)
@@ -58,9 +58,9 @@ unsigned long steps = 0;
 
 int deltax,deltay;
 
-//RTCdata data = {40,53,21, 3, 21,03,18}; // (3 == )Mittwoch, 21:53:40 Uhr 21.03.2018
+//RTCdata data = {40,53,21, 3, 21,03,18}; // (3 == )Mittwoch, 21:53:40 Uhr 21.03.2018 //7=sonntag
 #if SET_INIT_RTC > 0
-  RTCdata data = {20,17,12, 3, 21,03,18};
+  RTCdata data = {00,50,14, 7, 25,03,18};
 #else
   RTCdata data;
 #endif
@@ -74,7 +74,7 @@ byte lhours   = 1;
 byte lminutes = 1;
 byte lseconds = 1;
 
-bool showDetails = false;
+int showDetails = 0;
 
 char serialCache[33] = "                               ";
 int cpos = 0;
@@ -392,7 +392,7 @@ inline void printClock() {
     clockColor2 = oldCol;
   }
 
-  if (showDetails && lseconds != data.second) {
+  if (showDetails>0 && lseconds != data.second) {
     xx = myFont(55, 23, data.second/10);
     myFont(xx, 23, data.second - 10*(data.second/10));
   }
@@ -485,7 +485,7 @@ void setup() {
   
   oled.fillScreen(BACKGROUND);
   oled.setTextSize(1);
-  
+
   GCLK->GENDIV.reg = GCLK_GENDIV_ID(2) | GCLK_GENDIV_DIV(4);
   GCLK->GENCTRL.reg = GCLK_GENCTRL_ID(2) |
                       GCLK_GENCTRL_GENEN |
@@ -495,10 +495,6 @@ void setup() {
   GCLK->CLKCTRL.reg = GCLK_CLKCTRL_ID_WDT |
                       GCLK_CLKCTRL_CLKEN |
                       GCLK_CLKCTRL_GEN_GCLK2;
-  NVIC_DisableIRQ(WDT_IRQn);
-  NVIC_ClearPendingIRQ(WDT_IRQn);
-  NVIC_SetPriority(WDT_IRQn, 0); // Top priority
-  NVIC_EnableIRQ(WDT_IRQn);
 }
 
 
@@ -513,7 +509,7 @@ void loop() {
       contin = false;
       messageOnSec = 0;
       displayOnSec = 0;
-      showDetails = true;
+      showDetails = 1;
       clockColor2 = RED2;
       oled.writeCommand(SSD1331_CMD_DISPLAYON);
       char inChar = (char) ble.read();
@@ -535,37 +531,6 @@ void loop() {
     }
   }
 
-#if SET_BUTTONS > 0
-
-  if (digitalRead(BUTTON2) == LOW) {
-    displayOnSec=0;
-    lhours++; // force refresh
-    lminutes++;
-    oled.writeCommand(SSD1331_CMD_DISPLAYON);
-    while (digitalRead(BUTTON2) == LOW) {
-      data.hour = (data.hour+1)%24;
-      DS3231M_set(data);
-      lhours = data.hour-1;
-      printClock();
-      ticking();
-    }
-  }
-  
-  if (digitalRead(BUTTON3) == LOW) {
-    displayOnSec=0;
-    lhours++; // force refresh
-    lminutes++;
-    oled.writeCommand(SSD1331_CMD_DISPLAYON);
-    while (digitalRead(BUTTON3) == LOW) {
-      data.minute = (data.minute+1)%60;
-      lminutes = data.minute-1;
-      DS3231M_set(data);
-      printClock();
-      ticking();
-    }
-  }
-#else
-
   if (digitalRead(BUTTON3) == LOW) {
     alarmsec = -1; // off
     vibr = false;
@@ -580,8 +545,6 @@ void loop() {
     oled.writeCommand(SSD1331_CMD_DISPLAYON);
     alarmsec = (alarmsec+30)%600;
   }
-  
-#endif
 
   if (alarmsec == 0) {
     vibr = !vibr;
@@ -596,9 +559,67 @@ void loop() {
       potival = analogRead(POTI);
       clockColor2 = colors[map(potival, 0, 1024, 0, 14)];
     }
-    printClock();
 
-    if (showDetails) {
+    if (showDetails==0) {
+      printClock();
+      oled.setTextColor(clockColor2, BACKGROUND);
+      oled.setCursor(19, 28);
+      oled.drawBitmap(0, 21, step_bmp, 16, 16, clockColor2);
+      oled.print(steps);     
+      
+    } else if (showDetails==2) {
+      oled.setTextColor(YELLOW, GREYBLUE);
+      oled.setCursor(5, 2);
+      oled.print(" ");
+      oled.print(data.hour);
+      oled.print(":");
+      if (data.minute<10) oled.print("0");
+      oled.print(data.minute);
+      oled.print(":");
+      if (data.second<10) oled.print("0");
+      oled.print(data.second);
+      oled.print(" ");
+      
+      oled.setTextColor(WHITE, RED2);
+      oled.setCursor(5, 10);
+      oled.print(" ");
+      oled.print(data.day);
+      oled.print(".");
+      oled.print(data.month);
+      oled.print(".20");      
+      oled.print(data.year);
+      oled.print("  ");
+
+      oled.setTextColor(LIGHTBLUE, BACKGROUND);
+      oled.setCursor(5, 18);
+      switch(data.dofweek) {
+        case 1:
+          oled.print(" Montag    ");
+          break;
+        case 2:
+          oled.print(" Dienstag  ");
+          break;
+        case 3:
+          oled.print(" Mittwoch  ");
+          break;
+        case 4:
+          oled.print(" Donnerstag");
+          break;
+        case 5:
+          oled.print(" Freitag   ");
+          break;
+        case 6:
+          oled.print(" Samstag   ");
+          break;
+        case 7:
+          oled.print(" Sonntag   ");
+          break;
+        default:
+          ;
+      }
+      
+    } else {
+      printClock();
       oled.setTextColor(clockColor, BACKGROUND);
       oled.setCursor(0, 40);
       oled.print("         ");
@@ -615,11 +636,10 @@ void loop() {
           oled.print(serialCache);
         }
       }
+      oled.setCursor(19, 28);
+      oled.drawBitmap(0, 21, step_bmp, 16, 16, clockColor2);
+      oled.print(steps);
     }
-    oled.setTextColor(clockColor2, BACKGROUND);
-    oled.setCursor(19, 28);
-    oled.drawBitmap(0, 21, step_bmp, 16, 16, clockColor2);
-    oled.print(steps);     
   }
   
   analogWrite(SPEAKER, 0);
@@ -627,7 +647,7 @@ void loop() {
   if (digitalRead(BUTTON) == LOW) {
     pressTicks++;
     displayOnSec=0;
-    if (showDetails) batteryBar();
+    if (showDetails>0) batteryBar();
     clockColor2 = RED2;
     lhours++; // force refresh
     lminutes++;
@@ -635,14 +655,15 @@ void loop() {
     
     if (pressTicks>1) {
       pressTicks=0;
-      showDetails = true;
+      showDetails++;
+      oled.fillRect( 0, 0, 86, 37, BACKGROUND);
       analogWrite(SPEAKER, 50);
     }
   } else {
     pressTicks = -1;
   }
 
-  if (showDetails && data.second%3 == 0 && tick==0 && displayOnSec>=0 && messageOnSec < 0) {
+  if (showDetails>0 && data.second%3 == 0 && tick==0 && displayOnSec>=0 && messageOnSec < 0) {
     batteryBar();
   }
 
@@ -667,7 +688,7 @@ void loop() {
   }
   if (AcX > ONACCEL) {    
     displayOnSec=0;
-    if (showDetails) batteryBar();
+    if (showDetails>0) batteryBar();
     clockColor2 = RED2;
     lhours++; // force refresh
     lminutes++;
@@ -697,12 +718,12 @@ void loop() {
     oled.writeCommand(SSD1331_CMD_DISPLAYOFF);
     displayOnSec = -1;
     messageOnSec = -1;
-    showDetails = false;
+    showDetails = 0;
   }
 }
 
-void WDT_Handler(void) {
+ISR(WDT_vect) {
   WDT->CTRL.bit.ENABLE = 0;        // Disable watchdog
   while(WDT->STATUS.bit.SYNCBUSY); // Sync CTRL write
-  WDT->INTFLAG.bit.EW  = 1;        // Clear interrupt flag
+  WDT->INTFLAG.bit.EW  = 1;        // Clear interrupt flag  
 }
